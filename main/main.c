@@ -23,7 +23,7 @@
 static const char *TAG = "main";
 
 #define DISP_WIDTH 240
-#define DISP_HEIGHT 284
+#define DISP_HEIGHT 240
 
 static lv_obj_t *canvas = NULL;
 static lv_color_t *canvas_buf[2] = {NULL};
@@ -31,9 +31,11 @@ static int current_buf_idx = 0;
 static avi_player_handle_t avi_handle = NULL;
 static volatile bool reload_requested = false;
 static lv_obj_t *status_label = NULL;
+static lv_obj_t *title_label = NULL;
 static bool loop_playback = true;
 static bool is_playing = false;
 static volatile bool is_paused = false;
+static volatile bool next_track_requested = false;
 
 static jpeg_dec_handle_t jpeg_handle = NULL;
 
@@ -228,6 +230,10 @@ static void video_cb(frame_data_t *data, void *arg)
 
 static void audio_cb(frame_data_t *data, void *arg)
 {
+    while (is_paused) {
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+
     if (data && data->type == FRAME_TYPE_AUDIO && data->data && data->data_bytes > 0) {
         size_t bytes_written = 0;
         esp_err_t err = bsp_extra_i2s_write(data->data, data->data_bytes, &bytes_written, portMAX_DELAY);
@@ -268,8 +274,18 @@ static void input_task(void *arg)
 {
     gpio_set_direction(GPIO_NUM_0, GPIO_MODE_INPUT);
     gpio_set_pull_mode(GPIO_NUM_0, GPIO_PULLUP_ONLY);
+
+    const TickType_t double_click_window = pdMS_TO_TICKS(300);
+    uint32_t first_click_tick = 0;
+    int pending_clicks = 0;
     
     while (1) {
+        if (pending_clicks == 1 && (xTaskGetTickCount() - first_click_tick) > double_click_window) {
+            ESP_LOGI(TAG, "Single click: Toggle Pause");
+            is_paused = !is_paused;
+            pending_clicks = 0;
+        }
+
         if (gpio_get_level(GPIO_NUM_0) == 0) {
             uint32_t press_start = xTaskGetTickCount();
             bool long_press_handled = false;
@@ -280,6 +296,7 @@ static void input_task(void *arg)
                     // Long press detected
                     ESP_LOGI(TAG, "Long press: Reloading...");
                     is_paused = false; // Unpause if paused so the task can proceed to stop
+                    pending_clicks = 0;
                     reload_requested = true;
                     if (avi_handle) {
                         avi_player_play_stop(avi_handle);
@@ -289,12 +306,27 @@ static void input_task(void *arg)
             }
             
             if (!long_press_handled) {
-                // Short press
-                ESP_LOGI(TAG, "Short press: Toggle Pause");
-                is_paused = !is_paused;
+                // Short press: defer action to distinguish single vs double click
+                uint32_t now = xTaskGetTickCount();
+                if (pending_clicks == 0) {
+                    pending_clicks = 1;
+                    first_click_tick = now;
+                } else if ((now - first_click_tick) <= double_click_window) {
+                    ESP_LOGI(TAG, "Double click: Next track");
+                    pending_clicks = 0;
+                    next_track_requested = true;
+                    is_paused = false;
+                    if (avi_handle) {
+                        avi_player_play_stop(avi_handle);
+                    }
+                } else {
+                    // Window expired but not yet processed; treat as new first click
+                    pending_clicks = 1;
+                    first_click_tick = now;
+                }
             }
         }
-        vTaskDelay(pdMS_TO_TICKS(100));
+        vTaskDelay(pdMS_TO_TICKS(20));
     }
     vTaskDelete(NULL);
 }
@@ -407,6 +439,29 @@ static void avi_play_task(void *arg)
             for (current_file_index = 0; current_file_index < avi_file_count && loop_playback && !reload_requested; current_file_index++) {
                 const char *current_file = avi_file_list[current_file_index];
                 ESP_LOGI(TAG, "Playing: %s", current_file);
+
+                bsp_display_lock(0);
+                if (!title_label) {
+                     title_label = lv_label_create(lv_scr_act());
+                     lv_obj_set_width(title_label, DISP_WIDTH - 10);
+                     lv_obj_set_style_text_align(title_label, LV_TEXT_ALIGN_CENTER, 0);
+                     lv_obj_align(title_label, LV_ALIGN_TOP_MID, 0, 5);
+                     lv_obj_set_style_text_font(title_label, &lv_font_montserrat_14, 0);
+                     lv_obj_set_style_text_color(title_label, lv_color_white(), 0);
+                     lv_obj_set_style_bg_color(title_label, lv_color_black(), 0);
+                     lv_obj_set_style_bg_opa(title_label, LV_OPA_50, 0);
+                }
+                
+                const char *fname = strrchr(current_file, '/');
+                if (fname) fname++; else fname = current_file;
+                
+                lv_label_set_text(title_label, fname);
+                lv_obj_clear_flag(title_label, LV_OBJ_FLAG_HIDDEN);
+                lv_obj_move_foreground(title_label);
+                bsp_display_unlock();
+
+                uint32_t play_start_time = xTaskGetTickCount();
+                bool title_hidden = false;
                 
                 is_playing = true;
                 if (avi_player_play_from_file(avi_handle, current_file) != ESP_OK) {
@@ -423,6 +478,20 @@ static void avi_play_task(void *arg)
                 }
 
                 while (is_playing && loop_playback && !reload_requested) {
+                    if (!title_hidden && (xTaskGetTickCount() - play_start_time > pdMS_TO_TICKS(2000))) {
+                        bsp_display_lock(0);
+                        if (title_label) lv_obj_add_flag(title_label, LV_OBJ_FLAG_HIDDEN);
+                        bsp_display_unlock();
+                        title_hidden = true;
+                    }
+
+                    if (next_track_requested) {
+                        next_track_requested = false;
+                        is_paused = false;
+                        avi_player_play_stop(avi_handle);
+                        is_playing = false;
+                        break;
+                    }
                     vTaskDelay(pdMS_TO_TICKS(30));
                 }
             }

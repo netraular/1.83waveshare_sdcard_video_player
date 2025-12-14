@@ -1,6 +1,6 @@
 import os
 import subprocess
-import shutil
+import sys
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
 input_dir = os.path.join(script_dir, 'videos')
@@ -14,6 +14,17 @@ extensions = ('.mp4', '.avi', '.mov', '.mkv')
 
 files = [f for f in os.listdir(input_dir) if f.lower().endswith(extensions)]
 
+if not files:
+    print(f"No video files found in {input_dir}")
+    sys.exit(0)
+
+fps = '24'
+quality = '1'
+audio_rate = '44100'
+audio_channels = '1'
+
+print("Conversion mode: 24 FPS, 240x240, mono")
+
 for f in files:
     input_path = os.path.join(input_dir, f)
     filename = os.path.splitext(f)[0]
@@ -22,24 +33,17 @@ for f in files:
     print(f"Converting {f} to {output_path}...")
     
     # FFmpeg command
-    # -c:v mjpeg: Use MJPEG video codec
-    # -q:v 10: Video quality (lower is better, 2-31 usually). 10 is decent.
-    # -c:a pcm_s16le: Uncompressed 16-bit PCM audio (widely supported in AVI)
-    # -ar 44100: Audio sample rate
-    # -ac 2: Stereo
-    # filter: scale to cover 284x240, then crop to 284x240
-    
     cmd = [
         'ffmpeg', '-y',
         '-i', input_path,
         '-c:v', 'mjpeg',
-        '-q:v', '13', # Optimized quality for 30fps stability
-        '-pix_fmt', 'yuvj420p', # Use YUV 4:2:0 for smaller size and faster decode
-        '-r', '30',
+        '-q:v', quality,
+        '-pix_fmt', 'yuvj420p',
+        '-r', fps,
         '-c:a', 'pcm_s16le',
-        '-ar', '22050', # Default BSP sample rate
-        '-ac', '1',     # Mono audio
-        '-vf', 'scale=284:240:force_original_aspect_ratio=increase,crop=284:240,transpose=1',
+        '-ar', audio_rate,
+        '-ac', audio_channels,
+        '-vf', 'scale=240:240:force_original_aspect_ratio=increase,crop=240:240',
         output_path
     ]
     
