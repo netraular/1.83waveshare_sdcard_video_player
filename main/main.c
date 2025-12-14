@@ -9,6 +9,7 @@
 #include "lvgl.h"
 #include "bsp/esp-bsp.h"
 #include "bsp/display.h"
+#include "bsp/esp32_s3_touch_lcd_1_83.h"
 #include "bsp_board_extra.h"
 #include "lv_demos.h"
 #include "esp_jpeg_dec.h"
@@ -20,8 +21,8 @@
 
 static const char *TAG = "main";
 
-#define DISP_WIDTH 320
-#define DISP_HEIGHT 200
+#define DISP_WIDTH 284
+#define DISP_HEIGHT 240
 
 static lv_obj_t *canvas = NULL;
 static lv_color_t *canvas_buf[2] = {NULL};
@@ -359,7 +360,12 @@ void app_main(void)
         .lvgl_port_cfg = LVGL_PORT_INIT_CONFIG(),
     };
 
-    bsp_display_start_with_config(&cfg);
+    lv_display_t *disp = bsp_display_start_with_config(&cfg);
+    
+    bsp_display_lock(0);
+    bsp_display_rotate(disp, LV_DISPLAY_ROTATION_270);
+    bsp_display_unlock();
+
     bsp_display_backlight_on();
 
     bsp_display_lock(0);

@@ -1,3 +1,5 @@
 build/
 .venv/
 .vscode/
+scripts/videos/
+scripts/verify_execution.ps1
