@@ -3,3 +3,4 @@ build/
 .vscode/
 scripts/videos/
 scripts/verify_execution.ps1
+scripts/avi/videoclip.avi
