@@ -334,7 +334,7 @@ static void input_task(void *arg)
 static void avi_play_task(void *arg)
 {
     avi_player_config_t cfg = {
-        .buffer_size = 512 * 1024,
+        .buffer_size = 1 * 1024 * 1024, // 1MB psram buffer (1-2 seconds of video)
         .video_cb = video_cb,
         .audio_cb = audio_cb,
         .audio_set_clock_cb = audio_set_clock_callback,
@@ -344,7 +344,7 @@ static void avi_play_task(void *arg)
         .user_data = NULL,
         .stack_size = 12 * 1024,
 #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 1, 0)
-        .stack_in_psram = false,
+        .stack_in_psram = true,
 #endif
     };
 
