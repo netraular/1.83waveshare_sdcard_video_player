@@ -5,6 +5,7 @@
 #include "esp_err.h"
 #include "esp_check.h"
 #include "esp_memory_utils.h"
+#include "driver/gpio.h"
 
 #include "lvgl.h"
 #include "bsp/esp-bsp.h"
@@ -27,6 +28,9 @@ static const char *TAG = "main";
 static lv_obj_t *canvas = NULL;
 static lv_color_t *canvas_buf[2] = {NULL};
 static int current_buf_idx = 0;
+static avi_player_handle_t avi_handle = NULL;
+static volatile bool reload_requested = false;
+static lv_obj_t *status_label = NULL;
 static bool loop_playback = true;
 static bool is_playing = false;
 
@@ -160,13 +164,7 @@ static esp_err_t init_jpeg_decoder(void)
     return ESP_OK;
 }
 
-static void deinit_jpeg_decoder(void)
-{
-    if (jpeg_handle != NULL) {
-        jpeg_dec_close(jpeg_handle);
-        jpeg_handle = NULL;
-    }
-}
+
 
 static void video_cb(frame_data_t *data, void *arg)
 {
@@ -261,17 +259,40 @@ static void avi_end_cb(void *arg)
     is_playing = false;
 }
 
+static void input_task(void *arg)
+{
+    gpio_set_direction(GPIO_NUM_0, GPIO_MODE_INPUT);
+    gpio_set_pull_mode(GPIO_NUM_0, GPIO_PULLUP_ONLY);
+    
+    while (1) {
+        if (gpio_get_level(GPIO_NUM_0) == 0) {
+            vTaskDelay(pdMS_TO_TICKS(50));
+            if (gpio_get_level(GPIO_NUM_0) == 0) {
+                ESP_LOGI(TAG, "Button pressed");
+                reload_requested = true;
+                if (avi_handle) {
+                    avi_player_play_stop(avi_handle);
+                }
+                while (gpio_get_level(GPIO_NUM_0) == 0) {
+                    vTaskDelay(pdMS_TO_TICKS(100));
+                }
+            }
+        }
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+    vTaskDelete(NULL);
+}
+
 static void avi_play_task(void *arg)
 {
-    avi_player_handle_t handle;
     avi_player_config_t cfg = {
-        .buffer_size = 256 * 1024,
+        .buffer_size = 512 * 1024,
         .video_cb = video_cb,
         .audio_cb = audio_cb,
         .audio_set_clock_cb = audio_set_clock_callback,
         .avi_play_end_cb = avi_end_cb,
         .priority = 7,
-        .coreID = 0,
+        .coreID = 1,
         .user_data = NULL,
         .stack_size = 12 * 1024,
 #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 1, 0)
@@ -280,76 +301,127 @@ static void avi_play_task(void *arg)
     };
 
     bsp_display_lock(0);
+    lv_obj_set_style_bg_color(lv_scr_act(), lv_color_white(), 0);
+    lv_obj_set_style_bg_opa(lv_scr_act(), LV_OPA_COVER, 0);
     init_canvas();
     bsp_display_unlock();
 
-    ESP_ERROR_CHECK(avi_player_init(cfg, &handle));
+    ESP_ERROR_CHECK(avi_player_init(cfg, &avi_handle));
 
-    uint32_t frame_count = 0;
-    uint32_t last_time = xTaskGetTickCount();
-    int current_file_index = 0;
-
-    while (loop_playback) {
-        ESP_LOGI(TAG, "Starting file list playback");
-        
-        for (current_file_index = 0; current_file_index < avi_file_count && loop_playback; current_file_index++) {
-            const char *current_file = avi_file_list[current_file_index];
-            ESP_LOGI(TAG, "Playing: %s (%d/%d)", current_file, current_file_index + 1, avi_file_count);
-            
-            is_playing = true;
-            frame_count = 0;
-            last_time = xTaskGetTickCount();
-
-            esp_err_t err = avi_player_play_from_file(handle, current_file);
-            if (err != ESP_OK) {
-                ESP_LOGE(TAG, "Failed to play file: %s, error: %s", current_file, esp_err_to_name(err));
-                vTaskDelay(pdMS_TO_TICKS(2000));
-                continue;
+    while (1) {
+        if (reload_requested) {
+            reload_requested = false;
+            bsp_display_lock(0);
+            if (canvas) {
+                lv_canvas_fill_bg(canvas, lv_color_white(), LV_OPA_COVER);
+                lv_obj_invalidate(canvas);
             }
+            bsp_display_unlock();
+            bsp_sdcard_unmount();
+            vTaskDelay(pdMS_TO_TICKS(500));
+        }
 
-            while (is_playing && loop_playback) {
-                vTaskDelay(pdMS_TO_TICKS(30));
+        // Mount SD
+        if (bsp_sdcard_mount() != ESP_OK) {
+            bsp_display_lock(0);
+            if (canvas) {
+                lv_obj_add_flag(canvas, LV_OBJ_FLAG_HIDDEN);
+            }
+            if (!status_label) {
+                 status_label = lv_label_create(lv_scr_act());
+                 lv_obj_set_width(status_label, DISP_WIDTH - 20);
+                 lv_obj_set_style_text_align(status_label, LV_TEXT_ALIGN_CENTER, 0);
+                 lv_obj_align(status_label, LV_ALIGN_CENTER, 0, 0);
+                 lv_obj_set_style_text_font(status_label, &lv_font_montserrat_20, 0);
+                 lv_obj_set_style_text_color(status_label, lv_color_black(), 0);
+            }
+            lv_label_set_text(status_label, "Insert SD Card\nPress BOOT to reload");
+            lv_obj_clear_flag(status_label, LV_OBJ_FLAG_HIDDEN);
+            bsp_display_unlock();
+            
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            continue;
+        }
 
-                frame_count++;
-                if (frame_count % 100 == 0) {
-                    uint32_t current_time = xTaskGetTickCount();
-                    float fps = 100.0f / ((current_time - last_time) / 1000.0f);
-                    ESP_LOGI(TAG, "Frame rate: %.2f FPS", fps);
-                    last_time = current_time;
+        // Scan files
+        if (get_avi_file_list("/sdcard/avi") != ESP_OK || avi_file_count == 0) {
+            bsp_display_lock(0);
+            if (canvas) {
+                lv_obj_add_flag(canvas, LV_OBJ_FLAG_HIDDEN);
+            }
+            if (!status_label) {
+                 status_label = lv_label_create(lv_scr_act());
+                 lv_obj_set_width(status_label, DISP_WIDTH - 20);
+                 lv_obj_set_style_text_align(status_label, LV_TEXT_ALIGN_CENTER, 0);
+                 lv_obj_align(status_label, LV_ALIGN_CENTER, 0, 0);
+                 lv_obj_set_style_text_font(status_label, &lv_font_montserrat_20, 0);
+                 lv_obj_set_style_text_color(status_label, lv_color_black(), 0);
+            }
+            lv_label_set_text(status_label, "No AVI files found");
+            lv_obj_clear_flag(status_label, LV_OBJ_FLAG_HIDDEN);
+            bsp_display_unlock();
+
+            bsp_sdcard_unmount();
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            continue;
+        }
+
+        // Hide status label
+        bsp_display_lock(0);
+        if (status_label) {
+            lv_obj_add_flag(status_label, LV_OBJ_FLAG_HIDDEN);
+        }
+        bsp_display_unlock();
+
+        loop_playback = true;
+        int current_file_index = 0;
+
+        bsp_display_lock(0);
+        if (canvas) {
+            lv_obj_clear_flag(canvas, LV_OBJ_FLAG_HIDDEN);
+        }
+        bsp_display_unlock();
+
+        while (loop_playback && !reload_requested) {
+            for (current_file_index = 0; current_file_index < avi_file_count && loop_playback && !reload_requested; current_file_index++) {
+                const char *current_file = avi_file_list[current_file_index];
+                ESP_LOGI(TAG, "Playing: %s", current_file);
+                
+                is_playing = true;
+                if (avi_player_play_from_file(avi_handle, current_file) != ESP_OK) {
+                    FILE *f = fopen(current_file, "r");
+                    if (f) {
+                        fclose(f);
+                    } else {
+                        ESP_LOGW(TAG, "File access failed, SD card removed?");
+                        loop_playback = false;
+                        break;
+                    }
+                    vTaskDelay(pdMS_TO_TICKS(1000));
+                    continue;
+                }
+
+                while (is_playing && loop_playback && !reload_requested) {
+                    vTaskDelay(pdMS_TO_TICKS(30));
                 }
             }
+            if (!loop_playback || reload_requested) break;
+            vTaskDelay(pdMS_TO_TICKS(1000));
         }
-        
+
+        // Cleanup file list
+        if (avi_file_list) {
+            for (int i = 0; i < avi_file_count; i++) {
+                free(avi_file_list[i]);
+            }
+            free(avi_file_list);
+            avi_file_list = NULL;
+            avi_file_count = 0;
+        }
+
+        bsp_sdcard_unmount();
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
-
-    avi_player_play_stop(handle);
-    avi_player_deinit(handle);
-    deinit_jpeg_decoder();
-
-    bsp_display_lock(0);
-    for (int i = 0; i < 2; i++) {
-        if (canvas_buf[i]) {
-            jpeg_free_align(canvas_buf[i]);
-            canvas_buf[i] = NULL;
-        }
-    }
-    if (canvas) {
-        lv_obj_del(canvas);
-        canvas = NULL;
-    }
-    bsp_display_unlock();
-
-    if (avi_file_list) {
-        for (int i = 0; i < avi_file_count; i++) {
-            free(avi_file_list[i]);
-        }
-        free(avi_file_list);
-        avi_file_list = NULL;
-        avi_file_count = 0;
-    }
-
-    vTaskDelete(NULL);
 }
 
 void app_main(void)
@@ -366,7 +438,7 @@ void app_main(void)
         }
     };
 
-    lv_display_t *disp = bsp_display_start_with_config(&cfg);
+    bsp_display_start_with_config(&cfg);
     
     bsp_display_lock(0);
     // bsp_display_rotate(disp, LV_DISPLAY_ROTATION_270); // Rotated in video file
@@ -374,60 +446,6 @@ void app_main(void)
 
     bsp_display_backlight_on();
 
-    bsp_display_lock(0);
-    lv_obj_t *status_label = lv_label_create(lv_scr_act());
-    lv_label_set_long_mode(status_label, LV_LABEL_LONG_WRAP);
-    lv_obj_set_width(status_label, DISP_WIDTH - 20);
-    lv_obj_set_style_text_align(status_label, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_align(status_label, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_set_style_text_font(status_label, &lv_font_montserrat_20, 0);
-    bsp_display_unlock();
-
-    int retry_count = 0;
-    esp_err_t mount_err = ESP_FAIL;
-    while (1) {
-        bsp_display_lock(0);
-        lv_label_set_text_fmt(status_label, "Mounting SD card...\nAttempt: %d", retry_count + 1);
-        bsp_display_unlock();
-        
-        mount_err = bsp_sdcard_mount();
-        if (mount_err == ESP_OK) {
-            break;
-        }
-        
-        ESP_LOGW(TAG, "SD card mount attempt %d failed: %s", retry_count + 1, esp_err_to_name(mount_err));
-        retry_count++;
-        vTaskDelay(pdMS_TO_TICKS(2000));
-    }
-    
-    if (mount_err != ESP_OK) {
-        bsp_display_lock(0);
-        lv_label_set_text(status_label, "SD card error\nCheck and restart");
-        lv_obj_set_style_text_color(status_label, lv_color_hex(0xFF0000), 0);
-        bsp_display_unlock();
-        
-        while (1) {
-            vTaskDelay(pdMS_TO_TICKS(1000));
-        }
-    }
-
-    esp_err_t list_err = get_avi_file_list("/sdcard/avi");
-    if (list_err != ESP_OK || avi_file_count == 0) {
-        bsp_display_lock(0);
-        lv_label_set_text(status_label, "No AVI files found\nin /sdcard/avi");
-        lv_obj_set_style_text_color(status_label, lv_color_hex(0xFF0000), 0);
-        bsp_display_unlock();
-        
-        while (1) {
-            vTaskDelay(pdMS_TO_TICKS(1000));
-        }
-    }
-
-    bsp_display_lock(0);
-    lv_obj_del(status_label);
-    bsp_display_unlock();
-
-    ESP_LOGI(TAG, "SD card mounted successfully, found %d AVI files", avi_file_count);
-
     xTaskCreatePinnedToCore(avi_play_task, "avi_play_task", 12288, NULL, 7, NULL, 0);
+    xTaskCreatePinnedToCore(input_task, "input_task", 4096, NULL, 5, NULL, 0);
 }
