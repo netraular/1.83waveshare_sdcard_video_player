@@ -8,8 +8,12 @@ This project is a video player implementation for the **Waveshare ESP32-S3-Touch
 
 *   **Smooth Playback:** Optimized for ~30 FPS video playback.
 *   **Audio Support:** Plays audio via the onboard speaker (PCM 22050Hz Mono).
+*   **Touch Controls:**
+    *   Tap screen to Pause / Resume.
+    *   On-screen volume control button.
 *   **Playback Control:**
     *   **Short Press BOOT:** Pause / Resume playback.
+    *   **Double Press BOOT:** Next track.
     *   **Long Press BOOT:** Reload file list and restart playback (useful after changing SD card).
 *   **Hot Reload:** Supports hot-swapping the SD card.
 *   **Error Handling:** Displays a user-friendly error screen if the SD card is removed during playback.
@@ -35,5 +39,9 @@ python scripts/convert_videos.py
 3.  Insert the SD card into the device.
 4.  The player will automatically start looping through the videos.
 5.  **Controls:**
-    *   Press **BOOT** briefly to Pause/Resume.
-    *   Hold **BOOT** (approx. 1s) to reload the SD card and restart playback from the beginning.
+    *   **Touch Screen:** Tap anywhere to Pause/Resume.
+    *   **Volume:** Tap the speaker icon in the top-left corner to adjust volume.
+    *   **BOOT Button:**
+        *   Short Press: Pause / Resume.
+        *   Double Press: Next Track.
+        *   Hold (approx. 1s): Reload SD card and restart playback.
