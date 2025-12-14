@@ -33,20 +33,6 @@ dependencies:
       registry_url: https://components.espressif.com
       type: service
     version: 1.0.3
-  espressif/avi_player:
-    component_hash: abe07cedb7e90c4eebfd4cf93825727d5ed341f065bb2e2932d33d648b4474a7
-    dependencies:
-    - name: espressif/cmake_utilities
-      registry_url: https://components.espressif.com
-      require: private
-      version: '*'
-    - name: idf
-      require: private
-      version: '>=4.4'
-    source:
-      registry_url: https://components.espressif.com/
-      type: service
-    version: 2.0.0
   espressif/cmake_utilities:
     component_hash: 351350613ceafba240b761b4ea991e0f231ac7a9f59a9ee901f751bddc0bb18f
     dependencies:
@@ -54,7 +40,7 @@ dependencies:
       require: private
       version: '>=4.1'
     source:
-      registry_url: https://components.espressif.com
+      registry_url: https://components.espressif.com/
       type: service
     version: 0.5.3
   espressif/esp_codec_dev:
@@ -195,11 +181,11 @@ dependencies:
 direct_dependencies:
 - chmorgan/esp-audio-player
 - chmorgan/esp-file-iterator
-- espressif/avi_player
+- espressif/cmake_utilities
 - espressif/esp_new_jpeg
 - idf
 - lvgl/lvgl
 - waveshare/esp32_s3_touch_lcd_1_83
-manifest_hash: af4bd2f40113d450e57f2286eeae67c85b63ec072411b09795c88517ab407397
+manifest_hash: 99b073f7f78fcf01ef4fd5a91bb422ed8a77c53ddc6f33c334f06d59457191fd
 target: esp32s3
 version: 2.0.0
