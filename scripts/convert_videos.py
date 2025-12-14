@@ -33,7 +33,7 @@ for f in files:
         'ffmpeg', '-y',
         '-i', input_path,
         '-c:v', 'mjpeg',
-        '-q:v', '12', # Optimized quality for 30fps stability
+        '-q:v', '13', # Optimized quality for 30fps stability
         '-pix_fmt', 'yuvj420p', # Use YUV 4:2:0 for smaller size and faster decode
         '-r', '30',
         '-c:a', 'pcm_s16le',

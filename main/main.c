@@ -33,6 +33,7 @@ static volatile bool reload_requested = false;
 static lv_obj_t *status_label = NULL;
 static bool loop_playback = true;
 static bool is_playing = false;
+static volatile bool is_paused = false;
 
 static jpeg_dec_handle_t jpeg_handle = NULL;
 
@@ -168,6 +169,10 @@ static esp_err_t init_jpeg_decoder(void)
 
 static void video_cb(frame_data_t *data, void *arg)
 {
+    while (is_paused) {
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+
     if (!data || !data->data || data->data_bytes == 0)
         return;
 
@@ -266,16 +271,27 @@ static void input_task(void *arg)
     
     while (1) {
         if (gpio_get_level(GPIO_NUM_0) == 0) {
-            vTaskDelay(pdMS_TO_TICKS(50));
-            if (gpio_get_level(GPIO_NUM_0) == 0) {
-                ESP_LOGI(TAG, "Button pressed");
-                reload_requested = true;
-                if (avi_handle) {
-                    avi_player_play_stop(avi_handle);
+            uint32_t press_start = xTaskGetTickCount();
+            bool long_press_handled = false;
+            
+            while (gpio_get_level(GPIO_NUM_0) == 0) {
+                vTaskDelay(pdMS_TO_TICKS(50));
+                if (!long_press_handled && (xTaskGetTickCount() - press_start) > pdMS_TO_TICKS(1000)) {
+                    // Long press detected
+                    ESP_LOGI(TAG, "Long press: Reloading...");
+                    is_paused = false; // Unpause if paused so the task can proceed to stop
+                    reload_requested = true;
+                    if (avi_handle) {
+                        avi_player_play_stop(avi_handle);
+                    }
+                    long_press_handled = true;
                 }
-                while (gpio_get_level(GPIO_NUM_0) == 0) {
-                    vTaskDelay(pdMS_TO_TICKS(100));
-                }
+            }
+            
+            if (!long_press_handled) {
+                // Short press
+                ESP_LOGI(TAG, "Short press: Toggle Pause");
+                is_paused = !is_paused;
             }
         }
         vTaskDelay(pdMS_TO_TICKS(100));
