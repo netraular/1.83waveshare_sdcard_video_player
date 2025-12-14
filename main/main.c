@@ -343,6 +343,64 @@ static void input_task(void *arg)
     vTaskDelete(NULL);
 }
 
+static lv_obj_t *vol_popup = NULL;
+static lv_obj_t *vol_slider = NULL;
+static bool was_paused_before_vol = false;
+
+static void volume_slider_cb(lv_event_t *e)
+{
+    lv_obj_t *slider = lv_event_get_target(e);
+    int vol = (int)lv_slider_get_value(slider);
+    bsp_extra_codec_volume_set(vol, NULL);
+}
+
+static void volume_ok_cb(lv_event_t *e)
+{
+    if (vol_popup) {
+        lv_obj_add_flag(vol_popup, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (!was_paused_before_vol) {
+        is_paused = false;
+    }
+}
+
+static void volume_btn_cb(lv_event_t *e)
+{
+    if (lv_event_get_code(e) == LV_EVENT_CLICKED) {
+        was_paused_before_vol = is_paused;
+        is_paused = true;
+
+        if (vol_popup == NULL) {
+            vol_popup = lv_obj_create(lv_scr_act());
+            lv_obj_set_size(vol_popup, 200, 150);
+            lv_obj_center(vol_popup);
+            
+            lv_obj_t *label = lv_label_create(vol_popup);
+            lv_label_set_text(label, "Volume");
+            lv_obj_align(label, LV_ALIGN_TOP_MID, 0, 0);
+
+            vol_slider = lv_slider_create(vol_popup);
+            lv_obj_set_width(vol_slider, 160);
+            lv_obj_align(vol_slider, LV_ALIGN_CENTER, 0, -10);
+            lv_slider_set_range(vol_slider, 0, 100);
+            lv_slider_set_value(vol_slider, bsp_extra_codec_volume_get(), LV_ANIM_OFF);
+            lv_obj_add_event_cb(vol_slider, volume_slider_cb, LV_EVENT_VALUE_CHANGED, NULL);
+
+            lv_obj_t *btn = lv_btn_create(vol_popup);
+            lv_obj_align(btn, LV_ALIGN_BOTTOM_MID, 0, 0);
+            lv_obj_add_event_cb(btn, volume_ok_cb, LV_EVENT_CLICKED, NULL);
+            
+            lv_obj_t *btn_label = lv_label_create(btn);
+            lv_label_set_text(btn_label, "OK");
+            lv_obj_center(btn_label);
+        } else {
+            lv_obj_clear_flag(vol_popup, LV_OBJ_FLAG_HIDDEN);
+            lv_slider_set_value(vol_slider, bsp_extra_codec_volume_get(), LV_ANIM_OFF);
+            lv_obj_move_foreground(vol_popup);
+        }
+    }
+}
+
 static void avi_play_task(void *arg)
 {
     avi_player_config_t cfg = {
@@ -367,6 +425,20 @@ static void avi_play_task(void *arg)
     bsp_display_unlock();
 
     ESP_ERROR_CHECK(avi_player_init(cfg, &avi_handle));
+
+    bsp_display_lock(0);
+    lv_obj_t *vol_btn = lv_btn_create(lv_scr_act());
+    lv_obj_set_size(vol_btn, 40, 40);
+    lv_obj_align(vol_btn, LV_ALIGN_TOP_LEFT, 5, 5);
+    lv_obj_set_style_bg_color(vol_btn, lv_palette_main(LV_PALETTE_BLUE), 0);
+    lv_obj_set_style_bg_opa(vol_btn, LV_OPA_50, 0);
+    
+    lv_obj_t *lbl = lv_label_create(vol_btn);
+    lv_label_set_text(lbl, LV_SYMBOL_VOLUME_MAX);
+    lv_obj_center(lbl);
+    
+    lv_obj_add_event_cb(vol_btn, volume_btn_cb, LV_EVENT_CLICKED, NULL);
+    bsp_display_unlock();
 
     while (1) {
         if (reload_requested) {
