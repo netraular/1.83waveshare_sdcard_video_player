@@ -126,6 +126,15 @@ static esp_err_t get_avi_file_list(const char *dir_path)
     return ESP_OK;
 }
 
+static void screen_touch_cb(lv_event_t *e)
+{
+    lv_event_code_t code = lv_event_get_code(e);
+    if(code == LV_EVENT_CLICKED) {
+        ESP_LOGI(TAG, "Screen clicked: Toggle Pause");
+        is_paused = !is_paused;
+    }
+}
+
 static void init_canvas(void)
 {
     if (canvas == NULL) {
@@ -146,6 +155,9 @@ static void init_canvas(void)
         canvas = lv_canvas_create(lv_scr_act());
         lv_canvas_set_buffer(canvas, canvas_buf[0], DISP_WIDTH, DISP_HEIGHT, LV_COLOR_FORMAT_RGB565);
         lv_obj_center(canvas);
+
+        lv_obj_add_flag(canvas, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_event_cb(canvas, screen_touch_cb, LV_EVENT_CLICKED, NULL);
     }
 }
 
