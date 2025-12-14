@@ -464,6 +464,7 @@ static void avi_play_task(void *arg)
                 bool title_hidden = false;
                 
                 is_playing = true;
+                next_track_requested = false;
                 if (avi_player_play_from_file(avi_handle, current_file) != ESP_OK) {
                     FILE *f = fopen(current_file, "r");
                     if (f) {
