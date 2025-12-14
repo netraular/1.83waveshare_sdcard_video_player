@@ -360,7 +360,12 @@ static void avi_play_task(void *arg)
         }
 
         // Scan files
-        if (get_avi_file_list("/sdcard/avi") != ESP_OK || avi_file_count == 0) {
+        esp_err_t scan_ret = get_avi_file_list("/sdcard/videos");
+        if (scan_ret != ESP_OK || avi_file_count == 0) {
+             scan_ret = get_avi_file_list("/sdcard/avi");
+        }
+
+        if (scan_ret != ESP_OK || avi_file_count == 0) {
             bsp_display_lock(0);
             if (canvas) {
                 lv_obj_add_flag(canvas, LV_OBJ_FLAG_HIDDEN);
