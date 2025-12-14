@@ -19,7 +19,7 @@ if not files:
     sys.exit(0)
 
 fps = '24'
-quality = '1'
+quality = '5'
 audio_rate = '44100'
 audio_channels = '1'
 
