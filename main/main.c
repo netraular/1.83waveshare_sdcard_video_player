@@ -55,7 +55,7 @@ static esp_err_t get_avi_file_list(const char *dir_path)
 {
     DIR *dir = opendir(dir_path);
     if (!dir) {
-        ESP_LOGE(TAG, "Failed to open directory: %s", dir_path);
+        ESP_LOGW(TAG, "Failed to open directory: %s", dir_path);
         return ESP_FAIL;
     }
 
