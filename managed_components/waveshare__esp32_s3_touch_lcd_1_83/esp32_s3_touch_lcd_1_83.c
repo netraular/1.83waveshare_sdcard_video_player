@@ -188,7 +188,7 @@ esp_err_t bsp_audio_init(const i2s_std_config_t *i2s_config)
     // Increase DMA buffer size to prevent audio underrun during video decoding
     // At 44100Hz, 1024 frames * 8 desc = ~185ms buffer
     chan_cfg.dma_desc_num = 8;
-    chan_cfg.dma_frame_num = 1024;
+    chan_cfg.dma_frame_num = 1023;
     BSP_ERROR_CHECK_RETURN_ERR(i2s_new_channel(&chan_cfg, &i2s_tx_chan, &i2s_rx_chan));
 
     /* Setup I2S channels */
