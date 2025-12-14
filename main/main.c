@@ -371,7 +371,7 @@ static void volume_btn_cb(lv_event_t *e)
         is_paused = true;
 
         if (vol_popup == NULL) {
-            vol_popup = lv_obj_create(lv_scr_act());
+            vol_popup = lv_obj_create(lv_layer_top());
             lv_obj_set_size(vol_popup, 200, 150);
             lv_obj_center(vol_popup);
             
@@ -427,7 +427,7 @@ static void avi_play_task(void *arg)
     ESP_ERROR_CHECK(avi_player_init(cfg, &avi_handle));
 
     bsp_display_lock(0);
-    lv_obj_t *vol_btn = lv_btn_create(lv_scr_act());
+    lv_obj_t *vol_btn = lv_btn_create(lv_layer_top());
     lv_obj_set_size(vol_btn, 40, 40);
     lv_obj_align(vol_btn, LV_ALIGN_TOP_LEFT, 5, 5);
     lv_obj_set_style_bg_color(vol_btn, lv_palette_main(LV_PALETTE_BLUE), 0);
