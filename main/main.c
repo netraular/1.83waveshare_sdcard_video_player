@@ -21,8 +21,8 @@
 
 static const char *TAG = "main";
 
-#define DISP_WIDTH 284
-#define DISP_HEIGHT 240
+#define DISP_WIDTH 240
+#define DISP_HEIGHT 284
 
 static lv_obj_t *canvas = NULL;
 static lv_color_t *canvas_buf[2] = {NULL};
@@ -358,12 +358,18 @@ void app_main(void)
     bsp_extra_codec_volume_set(80, NULL);
     bsp_display_cfg_t cfg = {
         .lvgl_port_cfg = LVGL_PORT_INIT_CONFIG(),
+        .buffer_size = DISP_WIDTH * DISP_HEIGHT / 2, // Partial double buffer
+        .double_buffer = 1,
+        .flags = {
+            .buff_dma = 1,
+            .buff_spiram = 0,
+        }
     };
 
     lv_display_t *disp = bsp_display_start_with_config(&cfg);
     
     bsp_display_lock(0);
-    bsp_display_rotate(disp, LV_DISPLAY_ROTATION_270);
+    // bsp_display_rotate(disp, LV_DISPLAY_ROTATION_270); // Rotated in video file
     bsp_display_unlock();
 
     bsp_display_backlight_on();

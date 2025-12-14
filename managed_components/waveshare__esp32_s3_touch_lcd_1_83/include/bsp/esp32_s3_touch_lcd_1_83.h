@@ -200,7 +200,7 @@ esp_err_t bsp_spiffs_unmount(void);
  * \endcode
  **************************************************************************************************/
 #define BSP_SD_MOUNT_POINT      CONFIG_BSP_SD_MOUNT_POINT
-#define BSP_LCD_SPI_CLK_HZ      (24 * 1000 * 1000)
+#define BSP_LCD_SPI_CLK_HZ      (60 * 1000 * 1000)
 extern sdmmc_card_t *bsp_sdcard;
 
 /**
