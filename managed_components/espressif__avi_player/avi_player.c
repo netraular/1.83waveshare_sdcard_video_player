@@ -15,7 +15,6 @@
 #include "esp_err.h"
 #include "esp_check.h"
 #include "esp_idf_version.h"
-#include "esp_heap_caps.h"
 
 #include "avifile.h"
 #include "avi_player.h"
@@ -54,15 +53,6 @@ typedef struct {
         } memory;
         struct {
             FILE *avi_file;
-            uint8_t *ring_buffer;
-            uint32_t rb_size;
-            volatile uint32_t rb_head; // Write index
-            volatile uint32_t rb_tail; // Read index
-            volatile uint32_t rb_fill; // Available data
-            TaskHandle_t reader_task;
-            SemaphoreHandle_t rb_mutex;
-            volatile bool reader_running;
-            volatile bool reader_finished;
         } file;
     };
     uint8_t *pbuffer;
@@ -84,93 +74,6 @@ static uint32_t _REV(uint32_t value)
            (value & 0x00FF0000U) >> 8 | (value & 0xFF000000U) >> 24;
 }
 
-static void avi_reader_task(void *arg)
-{
-    avi_player_t *player = (avi_player_t *)arg;
-    // Increase chunk size to 128KB to improve throughput during high latency
-    uint8_t *chunk_buf = heap_caps_malloc(128 * 1024, MALLOC_CAP_SPIRAM);
-    if (!chunk_buf) {
-        ESP_LOGE(TAG, "Failed to alloc reader chunk buf");
-        vTaskDelete(NULL);
-        return;
-    }
-
-    while (player->avi_data.file.reader_running) {
-        xSemaphoreTake(player->avi_data.file.rb_mutex, portMAX_DELAY);
-        uint32_t fill = player->avi_data.file.rb_fill;
-        uint32_t size = player->avi_data.file.rb_size;
-        xSemaphoreGive(player->avi_data.file.rb_mutex);
-
-        uint32_t space = size - fill;
-
-        if (space < 128 * 1024) {
-            vTaskDelay(pdMS_TO_TICKS(50));
-            continue;
-        }
-
-        size_t read_len = fread(chunk_buf, 1, 128 * 1024, player->avi_data.file.avi_file);
-        if (read_len == 0) {
-            player->avi_data.file.reader_running = false; // Signal EOF
-            break; // EOF
-        }
-
-        xSemaphoreTake(player->avi_data.file.rb_mutex, portMAX_DELAY);
-        uint32_t head = player->avi_data.file.rb_head;
-        
-        uint32_t first_chunk = size - head;
-        if (read_len <= first_chunk) {
-            memcpy(player->avi_data.file.ring_buffer + head, chunk_buf, read_len);
-        } else {
-            memcpy(player->avi_data.file.ring_buffer + head, chunk_buf, first_chunk);
-            memcpy(player->avi_data.file.ring_buffer, chunk_buf + first_chunk, read_len - first_chunk);
-        }
-        
-        player->avi_data.file.rb_head = (head + read_len) % size;
-        player->avi_data.file.rb_fill += read_len;
-        xSemaphoreGive(player->avi_data.file.rb_mutex);
-    }
-
-    free(chunk_buf);
-    player->avi_data.file.reader_finished = true;
-    vTaskDelete(NULL);
-}
-
-static uint32_t rb_read(avi_data_t *avi, uint8_t *buffer, uint32_t length)
-{
-    uint32_t bytes_read = 0;
-    while (bytes_read < length) {
-        xSemaphoreTake(avi->file.rb_mutex, portMAX_DELAY);
-        uint32_t fill = avi->file.rb_fill;
-        
-        if (fill == 0) {
-            xSemaphoreGive(avi->file.rb_mutex);
-            if (!avi->file.reader_running) break;
-            vTaskDelay(pdMS_TO_TICKS(10));
-            continue;
-        }
-
-        uint32_t to_read = length - bytes_read;
-        if (to_read > fill) to_read = fill;
-
-        uint32_t tail = avi->file.rb_tail;
-        uint32_t size = avi->file.rb_size;
-        uint32_t first_chunk = size - tail;
-
-        if (to_read <= first_chunk) {
-            memcpy(buffer + bytes_read, avi->file.ring_buffer + tail, to_read);
-        } else {
-            memcpy(buffer + bytes_read, avi->file.ring_buffer + tail, first_chunk);
-            memcpy(buffer + bytes_read + first_chunk, avi->file.ring_buffer, to_read - first_chunk);
-        }
-
-        avi->file.rb_tail = (tail + to_read) % size;
-        avi->file.rb_fill -= to_read;
-        bytes_read += to_read;
-        xSemaphoreGive(avi->file.rb_mutex);
-    }
-    return bytes_read;
-}
-
 static uint32_t read_frame(avi_data_t *avi, uint8_t *buffer, uint32_t length, uint32_t *fourcc)
 {
     AVI_CHUNK_HEAD head;
@@ -183,9 +86,7 @@ static uint32_t read_frame(avi_data_t *avi, uint8_t *buffer, uint32_t length, ui
         memcpy(&head, avi->memory.data + avi->memory.read_offset, sizeof(AVI_CHUNK_HEAD));
         avi->memory.read_offset += sizeof(AVI_CHUNK_HEAD);
     } else if (avi->mode == PLAY_FILE) {
-        if (rb_read(avi, (uint8_t*)&head, sizeof(AVI_CHUNK_HEAD)) != sizeof(AVI_CHUNK_HEAD)) {
-            return 0;
-        }
+        fread(&head, sizeof(AVI_CHUNK_HEAD), 1, avi->file.avi_file);
     }
 
     if (head.FourCC) {
@@ -209,9 +110,7 @@ static uint32_t read_frame(avi_data_t *avi, uint8_t *buffer, uint32_t length, ui
             ESP_LOGE(TAG, "frame size %"PRIu32" exceeds available data", head.size);
             return 0;
         }
-        if (rb_read(avi, buffer, head.size) != head.size) {
-            return 0;
-        }
+        fread(buffer, head.size, 1, avi->file.avi_file);
     }
 
     return head.size;
@@ -256,27 +155,12 @@ static esp_err_t avi_player(avi_player_handle_t handle, size_t *BytesRD, uint32_
             player->avi_data.memory.read_offset = player->avi_data.AVI_file.movi_start;
         } else {
             fseek(player->avi_data.file.avi_file, player->avi_data.AVI_file.movi_start, SEEK_SET);
-            
-            // Start reader task
-            player->avi_data.file.reader_running = true;
-            xTaskCreatePinnedToCore(avi_reader_task, "avi_reader", 4096, player, 10, &player->avi_data.file.reader_task, 1);
         }
 
         player->avi_data.state = AVI_PARSER_DATA;
         *BytesRD = 0;
     }
     case AVI_PARSER_DATA: {
-        // Initial buffering: wait for 50% buffer fill
-        if (player->avi_data.mode == PLAY_FILE) {
-            if (player->avi_data.file.reader_running && player->avi_data.file.rb_fill < player->avi_data.file.rb_size / 2) {
-                ESP_LOGI(TAG, "Buffering...");
-                while (player->avi_data.file.reader_running && player->avi_data.file.rb_fill < player->avi_data.file.rb_size / 2) {
-                    vTaskDelay(pdMS_TO_TICKS(100));
-                }
-                ESP_LOGI(TAG, "Buffering done");
-            }
-        }
-
         /*!< clear event */
         xEventGroupClearBits(player->event_group, EVENT_AUDIO_BUF_READY | EVENT_VIDEO_BUF_READY);
         while (1) {
@@ -332,23 +216,7 @@ static esp_err_t avi_player(avi_player_handle_t handle, size_t *BytesRD, uint32_
     case AVI_PARSER_END:
         esp_timer_stop(player->timer_handle);
         if (player->avi_data.mode == PLAY_FILE) {
-            player->avi_data.file.reader_running = false;
-            // Wait for reader task to finish
-            int timeout = 0;
-            while (!player->avi_data.file.reader_finished && timeout < 200) { // Wait up to 2s
-                vTaskDelay(pdMS_TO_TICKS(10));
-                timeout++;
-            }
-            
             fclose(player->avi_data.file.avi_file);
-            if (player->avi_data.file.ring_buffer) {
-                free(player->avi_data.file.ring_buffer);
-                player->avi_data.file.ring_buffer = NULL;
-            }
-            if (player->avi_data.file.rb_mutex) {
-                vSemaphoreDelete(player->avi_data.file.rb_mutex);
-                player->avi_data.file.rb_mutex = NULL;
-            }
         }
 
         player->avi_data.state = AVI_PARSER_NONE;
@@ -485,24 +353,6 @@ esp_err_t  avi_player_play_from_file(avi_player_handle_t handle, const char *fil
         ESP_LOGE(TAG, "Cannot open %s", filename);
         return ESP_FAIL;
     }
-    
-    // Allocate 4MB ring buffer in PSRAM
-    player->avi_data.file.rb_size = 4 * 1024 * 1024;
-    player->avi_data.file.ring_buffer = heap_caps_malloc(player->avi_data.file.rb_size, MALLOC_CAP_SPIRAM);
-    if (!player->avi_data.file.ring_buffer) {
-        ESP_LOGE(TAG, "Failed to alloc ring buffer");
-        fclose(player->avi_data.file.avi_file);
-        return ESP_ERR_NO_MEM;
-    }
-    player->avi_data.file.rb_head = 0;
-    player->avi_data.file.rb_tail = 0;
-    player->avi_data.file.rb_fill = 0;
-    player->avi_data.file.rb_mutex = xSemaphoreCreateMutex();
-    player->avi_data.file.reader_running = false; // Start later
-    player->avi_data.file.reader_finished = false;
-
-    // xTaskCreatePinnedToCore(avi_reader_task, "avi_reader", 4096, player, 5, &player->avi_data.file.reader_task, 1);
-
     xEventGroupSetBits(player->event_group, EVENT_START_PLAY);
     return ESP_OK;
 }
