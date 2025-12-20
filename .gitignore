@@ -4,3 +4,4 @@ build/
 scripts/videos/
 scripts/verify_execution.ps1
 scripts/avi/videoclip.avi
+lv_port_pc_vscode/
