@@ -32,9 +32,62 @@ The player requires videos to be converted to a specific format (MJPEG video, PC
 python scripts/convert_videos.py
 ```
 
+## Building and Flashing
+
+### Prerequisites
+
+*   **ESP-IDF v5.5.x** installed and configured. [Installation Guide](https://docs.espressif.com/projects/esp-idf/en/latest/esp32s3/get-started/index.html)
+*   **Python 3.11+** with the ESP-IDF virtual environment properly set up.
+
+### Compile and Flash
+
+1.  **Activate ESP-IDF environment** (Windows PowerShell):
+    ```powershell
+    # Set up environment variables
+    $env:IDF_PATH = "C:\Users\<YOUR_USER>\esp\v5.5.1\esp-idf"
+    $env:IDF_PYTHON_ENV_PATH = "C:\Espressif\python_env\idf5.5_py3.11_env"
+    & "$env:IDF_PATH\export.ps1"
+    ```
+    
+    Or on Linux/macOS:
+    ```bash
+    . $HOME/esp/esp-idf/export.sh
+    ```
+
+2.  **Navigate to the project directory**:
+    ```bash
+    cd <project_directory>
+    ```
+
+3.  **Build the project**:
+    ```bash
+    idf.py build
+    ```
+
+4.  **Flash to the ESP32-S3**:
+    ```bash
+    idf.py flash
+    ```
+    
+    Or specify the serial port:
+    ```bash
+    idf.py -p COM3 flash       # Windows
+    idf.py -p /dev/ttyUSB0 flash  # Linux
+    ```
+
+5.  **Monitor serial output** (optional):
+    ```bash
+    idf.py monitor
+    ```
+    
+    Or build, flash, and monitor in one command:
+    ```bash
+    idf.py build flash monitor
+    ```
+
 ## How to Use
 
-1.  Flash the firmware to the ESP32-S3.
+1.  Flash the firmware to the ESP32-S3 (see above).
 2.  Prepare a microSD card with a `videos` folder containing converted `.avi` files.
 3.  Insert the SD card into the device.
 4.  The player will automatically start looping through the videos.
